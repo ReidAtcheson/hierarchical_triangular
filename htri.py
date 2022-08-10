@@ -78,6 +78,7 @@ def htri_to_dense(htri,bm,em,minm,k):
 
 
 
+@partial(jit, static_argnums=[1,2,3])
 def eval_htri(htri,bm,em,minm,x):
     def eval_htri_rec(htri,bm,em,minm,x):
         m,ncols=x.shape
@@ -103,16 +104,51 @@ def eval_htri(htri,bm,em,minm,x):
     out = eval_htri_rec(htri,bm,em,minm,out)
     return out
 
+@partial(jit, static_argnums=[1,2,3])
+def eval_htri_trans(htri,bm,em,minm,x):
+    def eval_htri_rec(htri,bm,em,minm,x):
+        m,ncols=x.shape
+        size=em-bm
+        if size<minm:
+            return x.at[bm:em,:].set(jla.solve_triangular(htri,x[bm:em,:],trans="T",lower=True,unit_diagonal=True))
+        else:
+            s2=size//2
+            left,lr,right = htri
+            lbm=bm
+            lem=bm+s2
+            rbm=bm+s2
+            rem=em
+            #Eliminate bottom block
+            x = eval_htri_rec(right,rbm,rem,minm,x)
+            U,Vt=lr
+            #Eliminate low rank factor
+            x = x.at[lbm:lem,:].add(-Vt.T@(U.T@(x[rbm:rem,:])))
+            #Eliminate top block
+            x = eval_htri_rec(left,lbm,lem,minm,x)
+            return x
+    out=x.copy()
+    out = eval_htri_rec(htri,bm,em,minm,out)
+    return out
+
+
+def eval_inv(params,minm,x):
+    d,htri=params
+    m=len(d)
+    z0 = eval_htri(htri,0,m,minm,x)
+    z1 = z0/d
+    z2 = eval_htri_trans(htri,0,m,minm,z1)
+    return z2
 
 
 
-m=128
-minm=8
-k=1
-seed=23498723
-rng=np.random.default_rng(seed)
-#htri = make_htri_id(0,m,32,1)
-htri=make_htri_rng_dense(0,m,minm,k,rng)
-L=htri_to_dense(htri,0,m,minm,k)
-out=eval_htri(htri,0,m,minm,L)
-print(jnp.linalg.norm(out-jnp.eye(m)))
+@partial(jit, static_argnums=[1])
+def loss(params,minm,Ax,x):
+    d,htri=params
+    m=len(d)
+    z0 = eval_htri(htri,0,m,minm,Ax)
+    z1 = z0/d
+    z2 = eval_htri_trans(htri,0,m,minm,z1)
+
+    return jnp.mean( (x-z2)*(x-z2) )
+
+

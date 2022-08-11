@@ -20,7 +20,7 @@ config.update("jax_enable_x64", True)
 def make_htri_id(bm,em,minm,k):
     size=em-bm
     if size<minm:
-        return jnp.zeros((size,size))
+        return jnp.eye(size)
     else:
         s2=size//2
         #(left,lr block, right)
@@ -129,6 +129,39 @@ def eval_htri_trans(htri,bm,em,minm,x):
     out=x.copy()
     out = eval_htri_rec(htri,bm,em,minm,out)
     return out
+
+
+#Ll 0 | yl
+#X  Lr| yr
+
+#Ll*yl
+#X*yl + Lr*yr
+
+
+
+def matvec_htri(htri,bm,em,minm,x):
+    def matvec_htri_rec(htri,bm,em,minm,x,y):
+        m,ncols=x.shape
+        size=em-bm
+        if size<minm:
+            return y.at[bm:em,:].add(htri@x[bm:em,:])
+        else:
+            s2=size//2
+            left,lr,right = htri
+            lbm=bm
+            lem=bm+s2
+            rbm=bm+s2
+            rem=em
+            y = matvec_htri_rec(left,lbm,lem,minm,x,y)
+            U,Vt=lr
+            y = y.at[rbm:rem,:].add(U@(Vt@(x[lbm:lem,:])))
+            y = matvec_htri_rec(right,rbm,rem,minm,x,y)
+            return y
+    m,n=x.shape
+    out=jnp.zeros((m,n))
+    out = matvec_htri_rec(htri,bm,em,minm,x,out)
+    return out
+
 
 
 def eval_inv(params,minm,x):
